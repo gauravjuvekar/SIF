@@ -9,14 +9,10 @@ def getWordmap(textfile):
     words = {}
     We = []
     with open(textfile, 'r') as f:
-        for (n, i) in enumerate(f):
-            i = i.split()
-            j = 1
-            v = []
-            while j < len(i):
-                v.append(float(i[j]))
-                j += 1
-            words[i[0]] = n
+        for (n, line) in enumerate(f):
+            line = line.split()
+            v = [float(x) for x in line[1:]]
+            words[line[0]] = n
             We.append(v)
     return (words, np.array(We))
 

@@ -1,4 +1,4 @@
-from . import data_io
+import data_io
 
 class tree(object):
 

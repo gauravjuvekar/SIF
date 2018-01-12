@@ -1,5 +1,5 @@
 import numpy as np
-from . import SIF_embedding
+import SIF_embedding
 
 def weighted_average_sim_rmpc(We,x1,x2,w1,w2, params):
     """

@@ -1,16 +1,14 @@
-
-
 import numpy as np
 import pickle
-from .tree import tree
+from tree import tree
 # from theano import config
 
-import tables
+# import tables
 
 GLOVE_DIM = 300
 
-class GloveEmbedding(tables.IsDescription):
-    word = StringCol(64)
+# class GloveEmbedding(tables.IsDescription):
+    # word = StringCol(64)
 
 def glove_to_pytables(textfile):
     words = dict()
@@ -33,6 +31,8 @@ def getWordmap(textfile):
             v = [float(x) for x in line[-GLOVE_DIM:]]
             words[' '.join(line[:-GLOVE_DIM])] = n
             We.append(v)
+            if n % 10**4 == 0:
+                print(n)
     return (words, np.array(We))
 
 def prepare_data(list_of_seqs):
@@ -210,7 +210,7 @@ def sentences2idx(sentences, words):
     """
     seq1 = []
     for i in sentences:
-        seq1.append(getSeq(i,aords))
+        seq1.append(getSeq(i, words))
     x1, m1 = prepare_data(seq1)
     return x1, m1
 

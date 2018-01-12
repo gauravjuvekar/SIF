@@ -1,4 +1,3 @@
-
 import sys, os
 from time import time
 import random
@@ -45,7 +44,7 @@ def get_pc(data, We, weight4ind, params):
         "Compute the weighted average vectors"
         n_samples = x.shape[0]
         emb = np.zeros((n_samples, We.shape[1]))
-        for i in xrange(n_samples):
+        for i in range(n_samples):
             emb[i,:] = w[i,:].dot(We[x[i,:],:]) / np.count_nonzero(w[i,:])
         return emb
 
@@ -74,7 +73,7 @@ def train_util(model, train_data, dev, test, train, words, params):
     "utility function for training the model"
     start_time = time()
     try:
-        for eidx in xrange(params.epochs):
+        for eidx in range(params.epochs):
             kf = data_io.get_minibatches_idx(len(train_data), params.batchsize, shuffle=True)
             uidx = 0
             for _, train_index in kf:
@@ -105,7 +104,7 @@ def train_util(model, train_data, dev, test, train, words, params):
                         g1mask = data_io.seq2weight(g1x, g1mask, params.weight4ind)
                     cost = model.train_function(scores, g1x, g1mask)
                 if np.isnan(cost) or np.isinf(cost):
-                    print 'NaN detected'
+                    print('NaN detected')
                 # undo batch to save RAM
                 for i in batch:
                     i[0].representation = None
@@ -118,20 +117,20 @@ def train_util(model, train_data, dev, test, train, words, params):
                 dp,ds = eval.supervised_evaluate(model,words,dev,params)
                 tp,ts = eval.supervised_evaluate(model,words,test,params)
                 rp,rs = eval.supervised_evaluate(model,words,train,params)
-                print "evaluation: ",dp,ds,tp,ts,rp,rs
+                print(("evaluation: ",dp,ds,tp,ts,rp,rs))
             elif params.task == "ent" or params.task == "sentiment":
                 ds = eval.supervised_evaluate(model,words,dev,params)
                 ts = eval.supervised_evaluate(model,words,test,params)
                 rs = eval.supervised_evaluate(model,words,train,params)
-                print "evaluation: ",ds,ts,rs
+                print(("evaluation: ",ds,ts,rs))
             else:
                 raise ValueError('Task should be ent or sim.')
-            print 'Epoch ', (eidx+1), 'Cost ', cost
+            print(('Epoch ', (eidx+1), 'Cost ', cost))
             sys.stdout.flush()
     except KeyboardInterrupt:
-        print "Training interupted"
+        print("Training interupted")
     end_time = time()
-    print "total time:", (end_time - start_time)
+    print(("total time:", (end_time - start_time)))
 
 
 ##################################################
@@ -140,7 +139,7 @@ random.seed(1)
 np.random.seed(1)
 
 # parse arguments
-print sys.argv
+print((sys.argv))
 parser = argparse.ArgumentParser()
 parser.add_argument("-LW", help="Lambda for word embeddings (normal training).", type=float)
 parser.add_argument("-LC", help="Lambda for composition parameters (normal training).", type=float)
@@ -221,7 +220,7 @@ else:
 if params.weightfile:
     word2weight = data_io.getWordWeight(params.weightfile, params.weightpara)
     params.weight4ind = data_io.getWeight(words, word2weight)
-    print 'word weights computed using parameter a=' + str(params.weightpara)
+    print(('word weights computed using parameter a=' + str(params.weightpara)))
 else:
     params.weight4ind = []
 if params.npc > 0:

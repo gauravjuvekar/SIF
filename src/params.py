@@ -7,5 +7,5 @@ class params(object):
 
     def __str__(self):
         t = "LW", self.LW, ", LC", self.LC, ", eta", self.eta
-        t = map(str, t)
+        t = list(map(str, t))
         return ' '.join(t)

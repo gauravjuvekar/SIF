@@ -5,14 +5,16 @@ import pickle
 from tree import tree
 #from theano import config
 
+GLOVE_DIM = 300
+
 def getWordmap(textfile):
     words = {}
     We = []
     with open(textfile, 'r') as f:
         for (n, line) in enumerate(f):
             line = line.split(' ')
-            v = [float(x) for x in line[-300:]]
-            words[' '.join(line[:-300])] = n
+            v = [float(x) for x in line[-GLOVE_DIM:]]
+            words[' '.join(line[:-GLOVE_DIM])] = n
             We.append(v)
     return (words, np.array(We))
 

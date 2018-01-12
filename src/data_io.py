@@ -1,11 +1,28 @@
-from __future__ import print_function
+
 
 import numpy as np
 import pickle
-from tree import tree
-#from theano import config
+from .tree import tree
+# from theano import config
+
+import tables
 
 GLOVE_DIM = 300
+
+class GloveEmbedding(tables.IsDescription):
+    word = StringCol(64)
+
+def glove_to_pytables(textfile):
+    words = dict()
+    We = []
+    with open(textfile, 'r') as f:
+        for (i, line) in enumerate(f):
+            line = line.split(' ')
+
+            v = [float(x) for x in line[-GLOVE_DIM:]]
+            words[' '.join(line[:-GLOVE_DIM])] = i
+            We.append(v)
+
 
 def getWordmap(textfile):
     words = {}
@@ -75,7 +92,7 @@ def get_minibatches_idx(n, minibatch_size, shuffle=False):
     if (minibatch_start != n):
         minibatches.append(idx_list[minibatch_start:])
 
-    return zip(range(len(minibatches)), minibatches)
+    return list(zip(list(range(len(minibatches))), minibatches))
 
 def getSimEntDataset(f,words,task):
     examples = []
@@ -193,7 +210,7 @@ def sentences2idx(sentences, words):
     """
     seq1 = []
     for i in sentences:
-        seq1.append(getSeq(i,aords)).
+        seq1.append(getSeq(i,aords))
     x1, m1 = prepare_data(seq1)
     return x1, m1
 
@@ -277,13 +294,13 @@ def getWordWeight(weightfile, a=1e-3):
                     N += float(i[1])
                 else:
                     print(i)
-        for key, value in word2weight.iteritems():
+        for key, value in list(word2weight.items()):
             word2weight[key] = a / (a + value/N)
         return word2weight
 
 def getWeight(words, word2weight):
     weight4ind = {}
-    for word, ind in words.iteritems():
+    for word, ind in list(words.items()):
         if word in word2weight:
             weight4ind[ind] = word2weight[word]
         else:
@@ -292,8 +309,8 @@ def getWeight(words, word2weight):
 
 def seq2weight(seq, mask, weight4ind):
     weight = np.zeros(seq.shape).astype('float32')
-    for i in xrange(seq.shape[0]):
-        for j in xrange(seq.shape[1]):
+    for i in range(seq.shape[0]):
+        for j in range(seq.shape[1]):
             if mask[i, j] > 0 and seq[i, j] >= 0:
                 weight[i, j] = weight4ind[seq[i, j]]
     weight = np.asarray(weight, dtype='float32')
@@ -350,17 +367,17 @@ def getIDFWeight(wordfile, save_file=''):
         g1x, g1mask, g2x, g2mask = getDataFromFile(prefix+f, words)
         dlen += g1x.shape[0]
         dlen += g2x.shape[0]
-        for i in xrange(g1x.shape[0]):
-            for j in xrange(g1x.shape[1]):
+        for i in range(g1x.shape[0]):
+            for j in range(g1x.shape[1]):
                 if g1mask[i, j] > 0:
                     df[g1x[i, j]] += 1
-        for i in xrange(g2x.shape[0]):
-            for j in xrange(g2x.shape[1]):
+        for i in range(g2x.shape[0]):
+            for j in range(g2x.shape[1]):
                 if g2mask[i, j] > 0:
                     df[g2x[i, j]] += 1
 
     weight4ind = {}
-    for i in xrange(len(df)):
+    for i in range(len(df)):
         weight4ind[i] = np.log2((dlen+2.0)/(1.0+df[i]))
     if save_file:
         pickle.dump(weight4ind, open(save_file, 'w'))

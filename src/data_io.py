@@ -191,7 +191,7 @@ def sentences2idx(sentences, words):
     """
     seq1 = []
     for i in sentences:
-        seq1.append(getSeq(i, words))
+        seq1.append(getSeq(i,aords)).
     x1, m1 = prepare_data(seq1)
     return x1, m1
 

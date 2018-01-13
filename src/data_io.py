@@ -26,7 +26,7 @@ def get_max_glove_word_len(textfile):
     the_word = None
     with open(textfile, 'r') as f:
         for (i, line) in enumerate(f):
-            line = line.split(' ')
+            line = line.decode().rstrip().split(' ')
             word = ' '.join(line[:-GLOVE_DIM])
             if len(word) > max_word_len:
                 the_word = word

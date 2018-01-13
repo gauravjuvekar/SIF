@@ -1,39 +1,79 @@
+import os
 import numpy as np
 import pickle
 from tree import tree
 # from theano import config
 
-# import tables
+import tables
 
 GLOVE_DIM = 300
+HDF5_STORE = "../data/sif.h5"
 
-# class GloveEmbedding(tables.IsDescription):
-    # word = StringCol(64)
 
-def glove_to_pytables(textfile):
-    words = dict()
-    We = []
+class WordIdxMap(tables.IsDescription):
+    word = tables.StringCol(1024, pos=0)
+    word_idx = tables.UInt64Col(pos=1)
+
+
+class GloveEmbedding(tables.IsDescription):
+    word_idx = tables.UInt64Col(pos=0)
+    embedding = tables.Float32Col(shape=(GLOVE_DIM,), pos=1)
+
+
+def get_max_glove_word_len(textfile):
+    max_word_len = 0
+    max_word_len_i = 0
+    the_word = None
     with open(textfile, 'r') as f:
         for (i, line) in enumerate(f):
             line = line.split(' ')
+            word = ' '.join(line[:-GLOVE_DIM])
+            if len(word) > max_word_len:
+                the_word = word
+                max_word_len = len(word)
+                max_word_len_i = i
+    return max_word_len, max_word_len_i, the_word
 
-            v = [float(x) for x in line[-GLOVE_DIM:]]
-            words[' '.join(line[:-GLOVE_DIM])] = i
-            We.append(v)
+
+def glove_to_pytables(textfile, hdf5_store=HDF5_STORE):
+    hdf5 = tables.open_file(hdf5_store, mode="w", title="SIF file")
+    group = hdf5.create_group("/", "glove", "Glove embeddings")
+    word_idx_table = hdf5.create_table(group, "word_idx", WordIdxMap,
+                                       "Word to index mapping")
+    glove_embedding_table = hdf5.create_table(group, "glove_embed",
+                                              GloveEmbedding,
+                                              "Glove embeddings")
+
+    with open(textfile, 'r') as f:
+        for (i, line) in enumerate(f):
+            if i % 10**4 == 0:
+                print("Saving to pytables:", i)
+            line = line.split(' ')
+            word = ' '.join(line[:-GLOVE_DIM])
+            vector = [float(x) for x in line[-GLOVE_DIM:]]
+
+            row = word_idx_table.row
+            try:
+                row["word"] = word.encode('ascii', errors='backslashreplace')
+            except TypeError as e:
+                print(word, repr(word),  i)
+                raise e
+            row["word_idx"] = i
+            row.append()
+
+            embed = glove_embedding_table.row
+            embed["word_idx"] = i
+            embed["embedding"] = np.array(vector)
+            embed.append()
+    word_idx_table.flush()
+    glove_embedding_table.flush()
+    hdf5.close()
 
 
 def getWordmap(textfile):
-    words = {}
-    We = []
-    with open(textfile, 'r') as f:
-        for (n, line) in enumerate(f):
-            line = line.split(' ')
-            v = [float(x) for x in line[-GLOVE_DIM:]]
-            words[' '.join(line[:-GLOVE_DIM])] = n
-            We.append(v)
-            if n % 10**4 == 0:
-                print(n)
-    return (words, np.array(We))
+    if not os.path.isfile(HDF5_STORE):
+        glove_to_pytables(textfile, HDF5_STORE)
+    return HDF5_STORE
 
 def prepare_data(list_of_seqs):
     lengths = [len(s) for s in list_of_seqs]

@@ -12,11 +12,11 @@ HDF5_STORE = "../data/sif.h5"
 
 class WordIdxMap(tables.IsDescription):
     word = tables.StringCol(1024, pos=0)
-    word_idx = tables.UInt64Col(pos=1)
+    word_idx = tables.Int64Col(pos=1)
 
 
 class GloveEmbedding(tables.IsDescription):
-    word_idx = tables.UInt64Col(pos=0)
+    word_idx = tables.Int64Col(pos=0)
     embedding = tables.Float32Col(shape=(GLOVE_DIM,), pos=1)
 
 
@@ -67,6 +67,8 @@ def glove_to_pytables(textfile, hdf5_store=HDF5_STORE):
             embed.append()
     word_idx_table.flush()
     glove_embedding_table.flush()
+    word_idx_table.cols.word.create_csindex()
+    glove_embedding_table.cols.word_idx.create_csindex()
     hdf5.close()
 
 

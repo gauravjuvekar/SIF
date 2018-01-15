@@ -82,7 +82,7 @@ def glove_to_pytables(textfile, hdf5_store=HDF5_STORE):
 
 
 def weights_to_pytables(weightfile, a=1e-3, hdf5_store=HDF5_STORE):
-    hdf5 = tables.open_file(hdf5_store, mode="a", title="SIF file")
+    hdf5 = tables.open_file(hdf5_store, mode="r+", title="SIF file")
     word_idx_tbl = hdf5.root.sif.word_idx
     glove_embed_tbl = hdf5.root.sif.glove_embed
     weight_tbl = hdf5.create_table(hdf5.root.sif, "word_weight",
@@ -91,43 +91,41 @@ def weights_to_pytables(weightfile, a=1e-3, hdf5_store=HDF5_STORE):
     for row in glove_embed_tbl:
         new_row = weight_tbl.row
         new_row['word_idx'] = row['word_idx']
-        if row['word_idx'] % 10**4 == 0:
-            print("Copying", row['word_idx'])
         new_row['weight'] = 1.0
         new_row.append()
+        if row['word_idx'] % 10**4 == 0:
+            print("Copying", row['word_idx'])
     weight_tbl.flush()
     weight_tbl.cols.word_idx.create_csindex()
+    hdf5.flush()
 
     if a <= 0:  # when the parameter makes no sense, use unweighted
         a = 1.0
 
     count_sum = 0
+    word_weight_dict = {}
     with open(weightfile) as f:
         for i, line in enumerate(f):
-            print("Weight for", line)
-            if line.startswith("three"):
-                import pdb
-                pdb.set_trace()
             line = line.strip()
             if(len(line) > 0):
                 line = line.split()
                 if(len(line) == 2):
                     word = encode(line[0])
                     count = float(line[1])
+                    print("Weight for", word, count)
+                    word_weight_dict[word] = count
                     count_sum += count
-                    word_idx = [row['word_idx'] for row in
-                                word_idx_tbl.where('word == cword',
-                                                   {'cword': word})]
-                    if len(word_idx):
-                        word_idx = word_idx[0]
-                        for row in weight_tbl.where('word_idx == widx',
-                                                    {'widx': word_idx}):
-                            row['weight'] = count
-                            row.update()
 
-    for row in weight_tbl:
-        row['weight'] = a / (a + row['weight'] / count_sum)
-        row.update()
+    for word, weight in word_weight_dict.items():
+        weight = a / (a + weight / count_sum)
+        print("Updating weight for", word)
+        row = list(word_idx_tbl.where("word == %r" % word))
+        if len(row):
+            row = row[0]
+            word_idx = row['word_idx']
+            for row2 in weight_tbl.where("word_idx == %r" % word_idx):
+                row2['weight'] = weight
+                row2.update()
     weight_tbl.flush()
     hdf5.close()
 

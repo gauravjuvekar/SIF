@@ -11,9 +11,9 @@ sentences = ['this is an example sentence', 'this is another sentence that is sl
 
 # load word vectors
 hdf5_store = data_io.getWordmap(wordfile)
-sys.exit(0)
 # load word weights
 word2weight = data_io.getWordWeight(weightfile, weightpara) # word2weight['str'] is the weight for the word 'str'
+sys.exit(0)
 weight4ind = data_io.getWeight(words, word2weight) # weight4ind[i] is the weight for the i-th word
 # load sentences
 x, m, _ = data_io.sentences2idx(sentences, words) # x is the array of word indices, m is the binary mask indicating whether there is a word in that location

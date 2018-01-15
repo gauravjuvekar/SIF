@@ -10,6 +10,10 @@ GLOVE_DIM = 300
 HDF5_STORE = "../data/sif.h5"
 
 
+def encode(s):
+    return s.encode('ascii', errors='backslashreplace')
+
+
 class WordIdxMap(tables.IsDescription):
     word = tables.StringCol(1024, pos=0)
     word_idx = tables.Int64Col(pos=1)
@@ -18,6 +22,11 @@ class WordIdxMap(tables.IsDescription):
 class GloveEmbedding(tables.IsDescription):
     word_idx = tables.Int64Col(pos=0)
     embedding = tables.Float32Col(shape=(GLOVE_DIM,), pos=1)
+
+
+class WordWeight(tables.IsDescription):
+    word_idx = tables.Int64Col(pos=0)
+    weight = tables.Float32Col(pos=1, dflt=1.0)
 
 
 def get_max_glove_word_len(textfile):
@@ -36,8 +45,8 @@ def get_max_glove_word_len(textfile):
 
 
 def glove_to_pytables(textfile, hdf5_store=HDF5_STORE):
-    hdf5 = tables.open_file(hdf5_store, mode="w", title="SIF file")
-    group = hdf5.create_group("/", "glove", "Glove embeddings")
+    hdf5 = tables.open_file(hdf5_store, mode="a", title="SIF file")
+    group = hdf5.create_group("/", "sif", "SIF embeddings")
     word_idx_table = hdf5.create_table(group, "word_idx", WordIdxMap,
                                        "Word to index mapping")
     glove_embedding_table = hdf5.create_table(group, "glove_embed",
@@ -54,7 +63,7 @@ def glove_to_pytables(textfile, hdf5_store=HDF5_STORE):
 
             row = word_idx_table.row
             try:
-                row["word"] = word.encode('ascii', errors='backslashreplace')
+                row["word"] = encode(word)
             except TypeError as e:
                 print(word, repr(word),  i)
                 raise e
@@ -72,10 +81,100 @@ def glove_to_pytables(textfile, hdf5_store=HDF5_STORE):
     hdf5.close()
 
 
+def weights_to_pytables(weightfile, a=1e-3, hdf5_store=HDF5_STORE):
+    hdf5 = tables.open_file(hdf5_store, mode="a", title="SIF file")
+    word_idx_tbl = hdf5.root.sif.word_idx
+    glove_embed_tbl = hdf5.root.sif.glove_embed
+    weight_tbl = hdf5.create_table(hdf5.root.sif, "word_weight",
+                                   WordWeight, "Word Idx to weight")
+
+    for row in glove_embed_tbl:
+        new_row = weight_tbl.row
+        new_row['word_idx'] = row['word_idx']
+        if row['word_idx'] % 10**4 == 0:
+            print("Copying", row['word_idx'])
+        new_row['weight'] = 1.0
+        new_row.append()
+    weight_tbl.flush()
+    weight_tbl.cols.word_idx.create_csindex()
+
+    if a <= 0:  # when the parameter makes no sense, use unweighted
+        a = 1.0
+
+    count_sum = 0
+    with open(weightfile) as f:
+        for i, line in enumerate(f):
+            print("Weight for", line)
+            if line.startswith("three"):
+                import pdb
+                pdb.set_trace()
+            line = line.strip()
+            if(len(line) > 0):
+                line = line.split()
+                if(len(line) == 2):
+                    word = encode(line[0])
+                    count = float(line[1])
+                    count_sum += count
+                    word_idx = [row['word_idx'] for row in
+                                word_idx_tbl.where('word == cword',
+                                                   {'cword': word})]
+                    if len(word_idx):
+                        word_idx = word_idx[0]
+                        for row in weight_tbl.where('word_idx == widx',
+                                                    {'widx': word_idx}):
+                            row['weight'] = count
+                            row.update()
+
+    for row in weight_tbl:
+        row['weight'] = a / (a + row['weight'] / count_sum)
+        row.update()
+    weight_tbl.flush()
+    hdf5.close()
+
+
 def getWordmap(textfile):
-    if not os.path.isfile(HDF5_STORE):
+    if os.path.isfile(HDF5_STORE):
+        f = tables.open_file(HDF5_STORE, "r")
+        try:
+            f.get_node("/sif", "glove_embed")
+        except tables.NoSuchNodeError:
+            f.close()
+            glove_to_pytables(textfile, HDF5_STORE)
+        else:
+            f.close()
+    else:
         glove_to_pytables(textfile, HDF5_STORE)
     return HDF5_STORE
+
+
+def getWordWeight(weightfile, a=1e-3):
+    if os.path.isfile(HDF5_STORE):
+        f = tables.open_file(HDF5_STORE, "r")
+        try:
+            f.get_node("/sif", "glove_embed")
+        except tables.NoSuchNodeError:
+            f.close()
+            raise ValueError("No Glove vectors in HDF5 file")
+        else:
+            try:
+                f.get_node("/sif", "word_weight")
+            except tables.NoSuchNodeError:
+                f.close()
+                weights_to_pytables(weightfile, a, HDF5_STORE)
+            else:
+                f.close()
+            return HDF5_STORE
+
+
+def getWeight(words, word2weight):
+    weight4ind = {}
+    for word, ind in list(words.items()):
+        if word in word2weight:
+            weight4ind[ind] = word2weight[word]
+        else:
+            weight4ind[ind] = 1.0
+    return weight4ind
+
 
 def prepare_data(list_of_seqs):
     lengths = [len(s) for s in list_of_seqs]
@@ -319,35 +418,6 @@ def entailment2idx(sim_file, words):
         x1, m1 = prepare_data(seq1)
         x2, m2 = prepare_data(seq2)
         return x1, m1, x2, m2, golds
-
-def getWordWeight(weightfile, a=1e-3):
-    if a <= 0:  # when the parameter makes no sense, use unweighted
-        a = 1.0
-
-    word2weight = {}
-    with open(weightfile) as f:
-        N = 0
-        for i in f:
-            i = i.strip()
-            if(len(i) > 0):
-                i = i.split()
-                if(len(i) == 2):
-                    word2weight[i[0]] = float(i[1])
-                    N += float(i[1])
-                else:
-                    print(i)
-        for key, value in list(word2weight.items()):
-            word2weight[key] = a / (a + value/N)
-        return word2weight
-
-def getWeight(words, word2weight):
-    weight4ind = {}
-    for word, ind in list(words.items()):
-        if word in word2weight:
-            weight4ind[ind] = word2weight[word]
-        else:
-            weight4ind[ind] = 1.0
-    return weight4ind
 
 def seq2weight(seq, mask, weight4ind):
     weight = np.zeros(seq.shape).astype('float32')

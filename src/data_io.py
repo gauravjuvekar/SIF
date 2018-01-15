@@ -4,29 +4,53 @@ import pickle
 from tree import tree
 # from theano import config
 
-import tables
+import sqlite3
+import logging
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger()
 
 GLOVE_DIM = 300
-HDF5_STORE = "../data/sif.h5"
+DB_FILE = "../data/sif.db"
 
 
 def encode(s):
-    return s.encode('ascii', errors='backslashreplace')
+    return s
+    # return s.encode('ascii', errors='backslashreplace')
 
 
-class WordIdxMap(tables.IsDescription):
-    word = tables.StringCol(1024, pos=0)
-    word_idx = tables.Int64Col(pos=1)
+def setup_db(f=DB_FILE):
+    db = sqlite3.connect(DB_FILE)
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS word_indexes(
+            word TEXT
+                NOT NULL
+                PRIMARY KEY,
+            idx INTEGER
+                UNIQUE
+                NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sif_embeddings(
+            idx INTEGER
+                NOT NULL
+                PRIMARY KEY
+                REFERENCES word_indexes(idx),
+            embedding BLOB,
+            weight REAL
+        );
+        """)
+    db.execute("PRAGMA synchronous = OFF")
+    db.execute("PRAGMA journal_mode = MEMORY")
+    return db
 
 
-class GloveEmbedding(tables.IsDescription):
-    word_idx = tables.Int64Col(pos=0)
-    embedding = tables.Float32Col(shape=(GLOVE_DIM,), pos=1)
+def embedding_to_bytes(vector):
+    return np.array(vector).tobytes()
 
 
-class WordWeight(tables.IsDescription):
-    word_idx = tables.Int64Col(pos=0)
-    weight = tables.Float32Col(pos=1, dflt=1.0)
+def embedding_from_bytes(bytestring):
+    return np.frombuffer(bytestring, dtype=float)
 
 
 def get_max_glove_word_len(textfile):
@@ -44,61 +68,43 @@ def get_max_glove_word_len(textfile):
     return max_word_len, max_word_len_i, the_word
 
 
-def glove_to_pytables(textfile, hdf5_store=HDF5_STORE):
-    hdf5 = tables.open_file(hdf5_store, mode="a", title="SIF file")
-    group = hdf5.create_group("/", "sif", "SIF embeddings")
-    word_idx_table = hdf5.create_table(group, "word_idx", WordIdxMap,
-                                       "Word to index mapping")
-    glove_embedding_table = hdf5.create_table(group, "glove_embed",
-                                              GloveEmbedding,
-                                              "Glove embeddings")
-
+def glove_to_db(textfile, db, weights=None):
+    if weights is None:
+        weights = dict()
     with open(textfile, 'r') as f:
         for (i, line) in enumerate(f):
             if i % 10**4 == 0:
-                print("Saving to pytables:", i)
+                log.debug("Saving to db %d", i)
+                db.commit()
             line = line.split(' ')
             word = ' '.join(line[:-GLOVE_DIM])
-            vector = [float(x) for x in line[-GLOVE_DIM:]]
-
-            row = word_idx_table.row
             try:
-                row["word"] = encode(word)
+                word = encode(word)
             except TypeError as e:
-                print(word, repr(word),  i)
-                raise e
-            row["word_idx"] = i
-            row.append()
+                raise Exception("Error encoding word") from e
 
-            embed = glove_embedding_table.row
-            embed["word_idx"] = i
-            embed["embedding"] = np.array(vector)
-            embed.append()
-    word_idx_table.flush()
-    glove_embedding_table.flush()
-    word_idx_table.cols.word.create_csindex()
-    glove_embedding_table.cols.word_idx.create_csindex()
-    hdf5.close()
+            vector = [float(x) for x in line[-GLOVE_DIM:]]
+            vector = np.array(vector)
+            try:
+                db.execute(
+                    "INSERT OR ABORT INTO "
+                    "word_indexes(word, idx) VALUES (?, ?);",
+                    (word, i))
+            except sqlite3.IntegrityError as e:
+                log.critical(
+                    "IntegrityError: Possible duplicate entry in Glove"
+                    "embeddings for word %r, line %d" % (word, i))
+            else:
+                weight = weights.get(word, 1.0)
+                db.execute(
+                    """INSERT INTO sif_embeddings(idx, embedding, weight)
+                       VALUES (?, ?, ?)""",
+                    (i, embedding_to_bytes(vector), weight))
+
+    db.commit()
 
 
-def weights_to_pytables(weightfile, a=1e-3, hdf5_store=HDF5_STORE):
-    hdf5 = tables.open_file(hdf5_store, mode="r+", title="SIF file")
-    word_idx_tbl = hdf5.root.sif.word_idx
-    glove_embed_tbl = hdf5.root.sif.glove_embed
-    weight_tbl = hdf5.create_table(hdf5.root.sif, "word_weight",
-                                   WordWeight, "Word Idx to weight")
-
-    for row in glove_embed_tbl:
-        new_row = weight_tbl.row
-        new_row['word_idx'] = row['word_idx']
-        new_row['weight'] = 1.0
-        new_row.append()
-        if row['word_idx'] % 10**4 == 0:
-            print("Copying", row['word_idx'])
-    weight_tbl.flush()
-    weight_tbl.cols.word_idx.create_csindex()
-    hdf5.flush()
-
+def weights_from_file(weightfile, a=1e-3):
     if a <= 0:  # when the parameter makes no sense, use unweighted
         a = 1.0
 
@@ -106,72 +112,17 @@ def weights_to_pytables(weightfile, a=1e-3, hdf5_store=HDF5_STORE):
     word_weight_dict = {}
     with open(weightfile) as f:
         for i, line in enumerate(f):
+            if i % 100 == 0:
+                log.debug("Reading weight %d", i)
             line = line.strip()
             if(len(line) > 0):
                 line = line.split()
                 if(len(line) == 2):
                     word = encode(line[0])
                     count = float(line[1])
-                    print("Weight for", word, count)
                     word_weight_dict[word] = count
                     count_sum += count
-
-    for word, weight in word_weight_dict.items():
-        weight = a / (a + weight / count_sum)
-        print("Updating weight for", word)
-        row = list(word_idx_tbl.where("word == %r" % word))
-        if len(row):
-            row = row[0]
-            word_idx = row['word_idx']
-            for row2 in weight_tbl.where("word_idx == %r" % word_idx):
-                row2['weight'] = weight
-                row2.update()
-    weight_tbl.flush()
-    hdf5.close()
-
-
-def getWordmap(textfile):
-    if os.path.isfile(HDF5_STORE):
-        f = tables.open_file(HDF5_STORE, "r")
-        try:
-            f.get_node("/sif", "glove_embed")
-        except tables.NoSuchNodeError:
-            f.close()
-            glove_to_pytables(textfile, HDF5_STORE)
-        else:
-            f.close()
-    else:
-        glove_to_pytables(textfile, HDF5_STORE)
-    return HDF5_STORE
-
-
-def getWordWeight(weightfile, a=1e-3):
-    if os.path.isfile(HDF5_STORE):
-        f = tables.open_file(HDF5_STORE, "r")
-        try:
-            f.get_node("/sif", "glove_embed")
-        except tables.NoSuchNodeError:
-            f.close()
-            raise ValueError("No Glove vectors in HDF5 file")
-        else:
-            try:
-                f.get_node("/sif", "word_weight")
-            except tables.NoSuchNodeError:
-                f.close()
-                weights_to_pytables(weightfile, a, HDF5_STORE)
-            else:
-                f.close()
-            return HDF5_STORE
-
-
-def getWeight(words, word2weight):
-    weight4ind = {}
-    for word, ind in list(words.items()):
-        if word in word2weight:
-            weight4ind[ind] = word2weight[word]
-        else:
-            weight4ind[ind] = 1.0
-    return weight4ind
+    return word_weight_dict
 
 
 def prepare_data(list_of_seqs):

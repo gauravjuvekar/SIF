@@ -140,16 +140,19 @@ def prepare_data(list_of_seqs):
     x_mask = np.asarray(x_mask, dtype='float32')
     return x, x_mask
 
-def lookupIDX(words,w):
-    w = w.lower()
-    if len(w) > 1 and w[0] == '#':
-        w = w.replace("#","")
-    if w in words:
-        return words[w]
-    elif 'UUUNKKK' in words:
-        return words['UUUNKKK']
-    else:
-        return len(words) - 1
+
+def lookup_indexes(words, db):
+    words = [encode(word.lower()) for word in words]
+    words = [word.replace("#", "")
+             if len(word) and word.startswith('#') else word
+             for word in words]
+    d = dict(
+        db.execute(
+            "SELECT word, idx FROM word_indexes "
+            "WHERE word in (" + ', '.join(['?'] * len(words)) + ");",
+            words))
+    return [d.get(word, None) for word in words]
+
 
 def getSeq(p1,words):
     p1 = p1.split()

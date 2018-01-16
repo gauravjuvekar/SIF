@@ -122,6 +122,9 @@ def weights_from_file(weightfile, a=1e-3):
                     count = float(line[1])
                     word_weight_dict[word] = count
                     count_sum += count
+
+    for word, weight in word_weight_dict.items():
+        word_weight_dict[word] = a / (a + (weight / count_sum))
     return word_weight_dict
 
 

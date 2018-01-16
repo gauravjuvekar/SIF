@@ -1,6 +1,5 @@
-import os
 import numpy as np
-import pickle
+import statistics
 from tree import tree
 # from theano import config
 
@@ -39,6 +38,15 @@ def setup_db(f=DB_FILE):
             embedding BLOB,
             weight REAL
         );
+
+        CREATE TABLE IF NOT EXISTS dict(
+            key TEXT
+                NOT NULL
+                PRIMARY KEY,
+            value_text TEXT,
+            value_int INTEGER,
+            value_float REAL
+        );
         """)
     db.execute("PRAGMA synchronous = OFF")
     db.execute("PRAGMA journal_mode = MEMORY")
@@ -71,6 +79,7 @@ def get_max_glove_word_len(textfile):
 def glove_to_db(textfile, db, weights=None):
     if weights is None:
         weights = dict()
+    norms = []
     with open(textfile, 'r') as f:
         for (i, line) in enumerate(f):
             if i % 10**4 == 0:
@@ -96,11 +105,14 @@ def glove_to_db(textfile, db, weights=None):
                     "embeddings for word %r, line %d" % (word, i))
             else:
                 weight = weights.get(word, 1.0)
+                norms.append(np.linalg.norm(vector))
                 db.execute(
                     """INSERT INTO sif_embeddings(idx, embedding, weight)
                        VALUES (?, ?, ?)""",
                     (i, embedding_to_bytes(vector), weight))
-
+    median = statistics.median(norms)
+    db.execute("INSERT INTO meta(key, value_float) VALUES (?, ?)",
+               ("glove_median_norm", median))
     db.commit()
 
 

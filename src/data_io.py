@@ -39,7 +39,7 @@ def setup_db(f=DB_FILE):
             weight REAL
         );
 
-        CREATE TABLE IF NOT EXISTS dict(
+        CREATE TABLE IF NOT EXISTS meta(
             key TEXT
                 NOT NULL
                 PRIMARY KEY,
@@ -140,6 +140,33 @@ def weights_from_file(weightfile, a=1e-3):
     return word_weight_dict
 
 
+def lookup_indexes(words, db):
+    words = [encode(word.lower()) for word in words]
+    # Because hashtags arent words or something
+    words = [word.replace("#", "")
+             if len(word) and word.startswith('#') else word
+             for word in words]
+    d = dict(
+        db.execute(
+            "SELECT word, idx FROM word_indexes "
+            "WHERE word in (" + ', '.join(['?'] * len(words)) + ");",
+            words))
+    ret = []
+    glove_norm = None
+    for word in words:
+        if word in d:
+            ret.append(d[word])
+        else:
+            if glove_norm is None:
+                glove_norm = db.execute("SELECT value_float FROM meta "
+                                        "WHERE key =='glove_median_norm'")
+                glove_norm = glove_norm.fetchone()[0]
+            randvec = np.random.uniform(low=-1, high=1, size=GLOVE_DIM)
+            randvec = glove_norm * (randvec / np.linalg.norm(randvec))
+            ret.append(randvec)
+    return ret
+
+
 def prepare_data(list_of_seqs):
     lengths = [len(s) for s in list_of_seqs]
     n_samples = len(list_of_seqs)
@@ -152,37 +179,6 @@ def prepare_data(list_of_seqs):
     x_mask = np.asarray(x_mask, dtype='float32')
     return x, x_mask
 
-
-def lookup_indexes(words, db):
-    words = [encode(word.lower()) for word in words]
-    words = [word.replace("#", "")
-             if len(word) and word.startswith('#') else word
-             for word in words]
-    d = dict(
-        db.execute(
-            "SELECT word, idx FROM word_indexes "
-            "WHERE word in (" + ', '.join(['?'] * len(words)) + ");",
-            words))
-    return [d.get(word, None) for word in words]
-
-
-def getSeq(p1,words):
-    p1 = p1.split()
-    X1 = []
-    for i in p1:
-        X1.append(lookupIDX(words, i))
-    return X1
-
-def getSeqs(p1,p2,words):
-    p1 = p1.split()
-    p2 = p2.split()
-    X1 = []
-    X2 = []
-    for i in p1:
-        X1.append(lookupIDX(words, i))
-    for i in p2:
-        X2.append(lookupIDX(words, i))
-    return X1, X2
 
 def get_minibatches_idx(n, minibatch_size, shuffle=False):
     idx_list = np.arange(n, dtype="int32")

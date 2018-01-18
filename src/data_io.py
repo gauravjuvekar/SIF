@@ -174,20 +174,18 @@ def get_data_for_indices(indices, db):
     for idx, weight, embedding_bytes in query:
         d[idx] = {'weight': weight,
                   'embedding': embedding_from_bytes(embedding_bytes)}
-    ret = []
+
     glove_norm = None
     for idx in indices:
-        if idx in d:
-            ret.append(d[idx])
-        else:
+        if idx not in d:
             if glove_norm is None:
                 glove_norm = db.execute("SELECT value_float FROM meta "
                                         "WHERE key =='glove_median_norm'")
                 glove_norm = glove_norm.fetchone()[0]
             randvec = np.random.uniform(low=-1, high=1, size=GLOVE_DIM)
             randvec = glove_norm * (randvec / np.linalg.norm(randvec))
-            ret.append({'weight': 1.0, 'embedding': randvec})
-    return ret
+            d[idx] = {'weight': 1.0, 'embedding': randvec}
+    return d
 
 
 def prepare_data(list_of_seqs):

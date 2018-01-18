@@ -163,10 +163,11 @@ def get_indices_for_tokens(words, db):
     return ret
 
 
-def get_data_for_indices(indices, db):
+def get_data_for_indices(indices, db, d=None):
     indices = list(indices)
     indices_set = set(indices) - set((None,))
-    d = dict()
+    if d is None:
+        d = dict()
     query = db.execute(
         "SELECT idx, weight, embedding FROM sif_embeddings "
         "WHERE idx IN (" + ', '.join(['?'] * len(indices_set)) + ");",

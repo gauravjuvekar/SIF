@@ -189,17 +189,18 @@ def get_data_for_indices(indices, db, d=None):
     return d
 
 
-def prepare_data(list_of_seqs):
-    lengths = [len(s) for s in list_of_seqs]
-    n_samples = len(list_of_seqs)
+def prepare_data(list_of_token_lists):
+    lengths = [len(s) for s in list_of_token_lists]
+    n_samples = len(list_of_token_lists)
     maxlen = np.max(lengths)
     x = np.zeros((n_samples, maxlen)).astype('int32')
     x_mask = np.zeros((n_samples, maxlen)).astype('float32')
-    for idx, sentence in enumerate(list_of_seqs):
-        x[idx, :lengths[idx]] = s
-        x_mask[idx, :lengths[idx]] = 1.
+    for idx, sentence in enumerate(list_of_token_lists):
+        x[idx, :lengths[idx]] = sentence
+        x_mask[idx, :lengths[idx]] = 1.0
     x_mask = np.asarray(x_mask, dtype='float32')
     return x, x_mask
+
 
 def sentences2idx(sentences, db):
     """

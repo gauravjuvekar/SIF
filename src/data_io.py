@@ -1,6 +1,5 @@
 import numpy as np
 import statistics
-from tree import tree
 # from theano import config
 
 import sqlite3

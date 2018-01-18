@@ -1,3 +1,4 @@
+import itertools
 import numpy as np
 import statistics
 # from theano import config
@@ -153,13 +154,7 @@ def get_indices_for_tokens(words, db):
             "SELECT word, idx FROM word_indexes "
             "WHERE word IN (" + ', '.join(['?'] * len(words)) + ");",
             words))
-    ret = []
-    for word in words:
-        if word in d:
-            ret.append(d[word])
-        else:
-            ret.append(None)
-    return ret
+    return d
 
 
 def get_data_for_indices(indices, db, d=None):
@@ -188,101 +183,25 @@ def get_data_for_indices(indices, db, d=None):
     return d
 
 
-def prepare_data(list_of_token_lists):
+def prepare_data(list_of_token_lists, db):
     lengths = [len(s) for s in list_of_token_lists]
     n_samples = len(list_of_token_lists)
+
+    flatten = [x for y in list_of_token_lists for x in y]
+    indices = get_indices_for_tokens(flatten, db)
+    # replace tokens with indices or unique negative indices if not found
+    count = itertools.count(-1, -1)
+    list_of_indices_lists = [[indices.get(word, next(count))
+                              for word in sentence]
+                             for sentence in list_of_token_lists]
+    flatten = [x for y in list_of_indices_lists for x in y]
+    data = get_data_for_indices(flatten, db)
+
     maxlen = np.max(lengths)
     x = np.zeros((n_samples, maxlen)).astype('int32')
-    x_mask = np.zeros((n_samples, maxlen)).astype('float32')
-    for idx, sentence in enumerate(list_of_token_lists):
+    x_weight = np.zeros((n_samples, maxlen)).astype('float32')
+    for idx, sentence in enumerate(list_of_indices_lists):
         x[idx, :lengths[idx]] = sentence
-        x_mask[idx, :lengths[idx]] = 1.0
-    x_mask = np.asarray(x_mask, dtype='float32')
-    return x, x_mask
-
-
-def sentences2idx(sentences, db):
-    """
-    Given a list of sentences, output array of word indices that can be fed into the algorithms.
-    :param sentences: a list of sentences
-    :param db: a database connection
-    :return: x1, m1. x1[i, :] is the word indices in sentence i, m1[i,:] is the mask for sentence i (0 means no word at the location)
-    """
-    seq1 = []
-    for i in sentences:
-        seq1.append(getSeq(i, words))
-    x1, m1 = prepare_data(seq1)
-    return x1, m1
-
-
-def sentiment2idx(sentiment_file, words):
-    """
-    Read sentiment data file, output array of word indices that can be fed into the algorithms.
-    :param sentiment_file: file name
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
-    :return: x1, m1, golds. x1[i, :] is the word indices in sentence i, m1[i,:] is the mask for sentence i (0 means no word at the location), golds[i] is the label (0 or 1) for sentence i.
-    """
-    with open(sentiment_file, 'r') as f:
-        golds = []
-        seq1 = []
-        for i in f:
-            i = i.split("\t")
-            p1, score = i[0], int(i[1])  # score are labels 0 and 1
-            X1 = getSeq(p1, words)
-            seq1.append(X1)
-            golds.append(score)
-        x1, m1 = prepare_data(seq1)
-        return x1, m1, golds
-
-def sim2idx(sim_file, words):
-    """
-    Read similarity data file, output array of word indices that can be fed into the algorithms.
-    :param sim_file: file name
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
-    :return: x1, m1, x2, m2, golds. x1[i, :] is the word indices in the first sentence in pair i, m1[i,:] is the mask for the first sentence in pair i (0 means no word at the location), golds[i] is the score for pair i (float). x2 and m2 are similar to x1 and m2 but for the second sentence in the pair.
-    """
-    with open(sim_file,'r') as f:
-        golds = []
-        seq1 = []
-        seq2 = []
-        for i in f:
-            i = i.split("\t")
-            p1, p2, score = i[0], i[1], float(i[2])
-            X1, X2 = getSeqs(p1, p2, words)
-            seq1.append(X1)
-            seq2.append(X2)
-            golds.append(score)
-        x1, m1 = prepare_data(seq1)
-        x2, m2 = prepare_data(seq2)
-        return x1, m1, x2, m2, golds
-
-def entailment2idx(sim_file, words):
-    """
-    Read similarity data file, output array of word indices that can be fed into the algorithms.
-    :param sim_file: file name
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
-    :return: x1, m1, x2, m2, golds. x1[i, :] is the word indices in the first sentence in pair i, m1[i,:] is the mask for the first sentence in pair i (0 means no word at the location), golds[i] is the label for pair i (CONTRADICTION NEUTRAL ENTAILMENT). x2 and m2 are similar to x1 and m2 but for the second sentence in the pair.
-    """
-    with open(sim_file, 'r') as f:
-        golds = []
-        seq1 = []
-        seq2 = []
-        for i in f:
-            i = i.split("\t")
-            p1, p2, score = i[0], i[1], i[2]
-            X1, X2 = getSeqs(p1, p2, words)
-            seq1.append(X1)
-            seq2.append(X2)
-            golds.append(score)
-        x1, m1 = prepare_data(seq1)
-        x2, m2 = prepare_data(seq2)
-        return x1, m1, x2, m2, golds
-
-def seq2weight(seq, mask, weight4ind):
-    weight = np.zeros(seq.shape).astype('float32')
-    for i in range(seq.shape[0]):
-        for j in range(seq.shape[1]):
-            if mask[i, j] > 0 and seq[i, j] >= 0:
-                weight[i, j] = weight4ind[seq[i, j]]
-    weight = np.asarray(weight, dtype='float32')
-    return weight
+        x_weight[idx, :lengths[idx]] = [data[word]['weight']
+                                        for word in sentence]
+    return x, x_weight, data

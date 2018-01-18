@@ -140,22 +140,45 @@ def weights_from_file(weightfile, a=1e-3):
     return word_weight_dict
 
 
-def lookup_indexes(words, db):
-    words = [encode(word.lower()) for word in words]
+def sentence_to_indices(sentence, db):
+    words = [encode(word.lower()) for word in sentence]
     # Because hashtags arent words or something
     words = [word.replace("#", "")
              if len(word) and word.startswith('#') else word
              for word in words]
+
+
+def get_indices_for_tokens(words, db):
     d = dict(
         db.execute(
             "SELECT word, idx FROM word_indexes "
-            "WHERE word in (" + ', '.join(['?'] * len(words)) + ");",
+            "WHERE word IN (" + ', '.join(['?'] * len(words)) + ");",
             words))
     ret = []
-    glove_norm = None
     for word in words:
         if word in d:
             ret.append(d[word])
+        else:
+            ret.append(None)
+    return ret
+
+
+def get_data_for_indices(indices, db):
+    indices = list(indices)
+    indices_set = set(indices) - set((None,))
+    d = dict()
+    query = db.execute(
+        "SELECT idx, weight, embedding FROM sif_embeddings "
+        "WHERE idx IN (" + ', '.join(['?'] * len(indices_set)) + ");",
+        list(indices_set))
+    for idx, weight, embedding_bytes in query:
+        d[idx] = {'weight': weight,
+                  'embedding': embedding_from_bytes(embedding_bytes)}
+    ret = []
+    glove_norm = None
+    for idx in indices:
+        if idx in d:
+            ret.append(d[idx])
         else:
             if glove_norm is None:
                 glove_norm = db.execute("SELECT value_float FROM meta "
@@ -163,7 +186,7 @@ def lookup_indexes(words, db):
                 glove_norm = glove_norm.fetchone()[0]
             randvec = np.random.uniform(low=-1, high=1, size=GLOVE_DIM)
             randvec = glove_norm * (randvec / np.linalg.norm(randvec))
-            ret.append(randvec)
+            ret.append({'weight': 1.0, 'embedding': randvec})
     return ret
 
 
@@ -173,143 +196,17 @@ def prepare_data(list_of_seqs):
     maxlen = np.max(lengths)
     x = np.zeros((n_samples, maxlen)).astype('int32')
     x_mask = np.zeros((n_samples, maxlen)).astype('float32')
-    for idx, s in enumerate(list_of_seqs):
+    for idx, sentence in enumerate(list_of_seqs):
         x[idx, :lengths[idx]] = s
         x_mask[idx, :lengths[idx]] = 1.
     x_mask = np.asarray(x_mask, dtype='float32')
     return x, x_mask
 
-
-def get_minibatches_idx(n, minibatch_size, shuffle=False):
-    idx_list = np.arange(n, dtype="int32")
-
-    if shuffle:
-        np.random.shuffle(idx_list)
-
-    minibatches = []
-    minibatch_start = 0
-    for i in range(n // minibatch_size):
-        minibatches.append(idx_list[minibatch_start:
-        minibatch_start + minibatch_size])
-        minibatch_start += minibatch_size
-
-    if (minibatch_start != n):
-        minibatches.append(idx_list[minibatch_start:])
-
-    return list(zip(list(range(len(minibatches))), minibatches))
-
-def getSimEntDataset(f,words,task):
-    examples = []
-    with open(f, 'r') as data:
-        for i in data:
-            i = i.strip()
-            if(len(i) > 0):
-                i = i.split('\t')
-                if len(i) == 3:
-                    if task == "sim":
-                        e = (tree(i[0], words), tree(i[1], words), float(i[2]))
-                        examples.append(e)
-                    elif task == "ent":
-                        e = (tree(i[0], words), tree(i[1], words), i[2])
-                        examples.append(e)
-                    else:
-                        raise ValueError('Params.traintype not set correctly.')
-
-                else:
-                    print(i)
-    return examples
-
-def getSentimentDataset(f,words):
-    examples = []
-    with open(f, 'r') as data:
-        for i in data:
-            i = i.strip()
-            if(len(i) > 0):
-                i = i.split('\t')
-                if len(i) == 2:
-                    e = (tree(i[0], words), i[1])
-                    examples.append(e)
-                else:
-                    print(i)
-    return examples
-
-def getDataSim(batch, nout):
-    g1 = []
-    g2 = []
-    for i in batch:
-        g1.append(i[0].embeddings)
-        g2.append(i[1].embeddings)
-
-    g1x, g1mask = prepare_data(g1)
-    g2x, g2mask = prepare_data(g2)
-
-    scores = []
-    if nout <= 0:
-        return (scores, g1x, g1mask, g2x, g2mask)
-
-    for i in batch:
-        temp = np.zeros(nout)
-        score = float(i[2])
-        ceil, fl = int(np.ceil(score)), int(np.floor(score))
-        if ceil == fl:
-            temp[fl - 1] = 1
-        else:
-            temp[fl - 1] = ceil - score
-            temp[ceil - 1] = score - fl
-        scores.append(temp)
-    scores = np.matrix(scores) + 0.000001
-    scores = np.asarray(scores, dtype='float32')
-    return (scores, g1x, g1mask, g2x, g2mask)
-
-def getDataEntailment(batch):
-    g1, g2 = [], []
-    for i in batch:
-        g1.append(i[0].embeddings)
-        g2.append(i[1].embeddings)
-
-    g1x, g1mask = prepare_data(g1)
-    g2x, g2mask = prepare_data(g2)
-
-    scores = []
-    for i in batch:
-        temp = np.zeros(3)
-        label = i[2].strip()
-        if label == "CONTRADICTION":
-            temp[0] = 1
-        if label == "NEUTRAL":
-            temp[1] = 1
-        if label == "ENTAILMENT":
-            temp[2] = 1
-        scores.append(temp)
-    scores = np.matrix(scores) + 0.000001
-    scores = np.asarray(scores, dtype='float32')
-    return (scores, g1x, g1mask, g2x, g2mask)
-
-def getDataSentiment(batch):
-    g1 = []
-    for i in batch:
-        g1.append(i[0].embeddings)
-
-    g1x, g1mask = prepare_data(g1)
-
-    scores = []
-    for i in batch:
-        temp = np.zeros(2)
-        label = i[1].strip()
-        if label == "0":
-            temp[0] = 1
-        if label == "1":
-            temp[1] = 1
-        scores.append(temp)
-    scores = np.matrix(scores)+0.000001
-    scores = np.asarray(scores, dtype='float32')
-    return (scores, g1x, g1mask)
-
-def sentences2idx(sentences, words):
+def sentences2idx(sentences, db):
     """
     Given a list of sentences, output array of word indices that can be fed into the algorithms.
     :param sentences: a list of sentences
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
+    :param db: a database connection
     :return: x1, m1. x1[i, :] is the word indices in sentence i, m1[i,:] is the mask for sentence i (0 means no word at the location)
     """
     seq1 = []

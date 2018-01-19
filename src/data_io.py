@@ -189,10 +189,14 @@ def prepare_data(list_of_token_lists, db):
 
     flatten = [x for y in list_of_token_lists for x in y]
     indices = get_indices_for_tokens(flatten, db)
+
     # replace tokens with indices or unique negative indices if not found
-    count = itertools.count(-1, -1)
-    list_of_indices_lists = [[indices.get(word, next(count))
-                              for word in sentence]
+    neg_count = itertools.count(-1, -1)
+    for token in flatten:
+        if token not in indices:
+            indices[token] = next(neg_count)
+
+    list_of_indices_lists = [[indices[word] for word in sentence]
                              for sentence in list_of_token_lists]
     flatten = [x for y in list_of_indices_lists for x in y]
     data = get_data_for_indices(flatten, db)

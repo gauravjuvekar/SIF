@@ -16,7 +16,7 @@ weightfile = '../auxiliary_data/enwiki_vocab_min200.txt'
 weightpara = 1e-3
 # number of principal components to remove in SIF weighting scheme
 rmpc = 1
-sentences = ['this is an example sentence'.split(),
+sentences = ['this is an example sentenc'.split(),
              'this is another sentence that is slightly longer'.split()]
 
 db = data_io.setup_db()
@@ -34,5 +34,10 @@ params.rmpc = rmpc
 embedding = SIF_embedding.SIF_embedding(idx_mat, weight_mat, data, params)
 
 pprint.pprint(embedding)
+print("Cosine similarity",
+      1 - scipy.spatial.distance.cosine(embedding[0, :], embedding[1, :]))
+print("Euclidean distance",
+      scipy.spatial.distance.euclidean(embedding[0, :], embedding[1, :]))
+
 
 db.close()

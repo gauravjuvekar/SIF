@@ -1,384 +1,211 @@
+import itertools
 import numpy as np
-import pickle
-from tree import tree
+import statistics
 # from theano import config
 
-# import tables
+import sqlite3
+import logging
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger()
 
 GLOVE_DIM = 300
+DB_FILE = "../data/sif.db"
 
-# class GloveEmbedding(tables.IsDescription):
-    # word = StringCol(64)
 
-def glove_to_pytables(textfile):
-    words = dict()
-    We = []
+def encode(s):
+    return s
+    # return s.encode('ascii', errors='backslashreplace')
+
+
+def setup_db(f=DB_FILE):
+    db = sqlite3.connect(DB_FILE)
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS word_indexes(
+            word TEXT
+                NOT NULL
+                PRIMARY KEY,
+            idx INTEGER
+                UNIQUE
+                NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sif_embeddings(
+            idx INTEGER
+                NOT NULL
+                PRIMARY KEY
+                REFERENCES word_indexes(idx),
+            embedding BLOB,
+            weight REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS meta(
+            key TEXT
+                NOT NULL
+                PRIMARY KEY,
+            value_text TEXT,
+            value_int INTEGER,
+            value_float REAL
+        );
+        """)
+    db.execute("PRAGMA synchronous = OFF")
+    db.execute("PRAGMA journal_mode = MEMORY")
+    return db
+
+
+def embedding_to_bytes(vector):
+    return np.array(vector).tobytes()
+
+
+def embedding_from_bytes(bytestring):
+    return np.frombuffer(bytestring, dtype=float)
+
+
+def get_max_glove_word_len(textfile):
+    max_word_len = 0
+    max_word_len_i = 0
+    the_word = None
     with open(textfile, 'r') as f:
         for (i, line) in enumerate(f):
-            line = line.split(' ')
+            line = line.decode().rstrip().split(' ')
+            word = ' '.join(line[:-GLOVE_DIM])
+            if len(word) > max_word_len:
+                the_word = word
+                max_word_len = len(word)
+                max_word_len_i = i
+    return max_word_len, max_word_len_i, the_word
 
-            v = [float(x) for x in line[-GLOVE_DIM:]]
-            words[' '.join(line[:-GLOVE_DIM])] = i
-            We.append(v)
 
-
-def getWordmap(textfile):
-    words = {}
-    We = []
+def glove_to_db(textfile, db, weights=None):
+    if weights is None:
+        weights = dict()
+    norms = []
     with open(textfile, 'r') as f:
-        for (n, line) in enumerate(f):
+        for (i, line) in enumerate(f):
+            if i % 10**4 == 0:
+                log.debug("Saving to db %d", i)
+                db.commit()
             line = line.split(' ')
-            v = [float(x) for x in line[-GLOVE_DIM:]]
-            words[' '.join(line[:-GLOVE_DIM])] = n
-            We.append(v)
-            if n % 10**4 == 0:
-                print(n)
-    return (words, np.array(We))
+            word = ' '.join(line[:-GLOVE_DIM])
+            try:
+                word = encode(word)
+            except TypeError as e:
+                raise Exception("Error encoding word") from e
 
-def prepare_data(list_of_seqs):
-    lengths = [len(s) for s in list_of_seqs]
-    n_samples = len(list_of_seqs)
-    maxlen = np.max(lengths)
-    x = np.zeros((n_samples, maxlen)).astype('int32')
-    x_mask = np.zeros((n_samples, maxlen)).astype('float32')
-    for idx, s in enumerate(list_of_seqs):
-        x[idx, :lengths[idx]] = s
-        x_mask[idx, :lengths[idx]] = 1.
-    x_mask = np.asarray(x_mask, dtype='float32')
-    return x, x_mask
-
-def lookupIDX(words,w):
-    w = w.lower()
-    if len(w) > 1 and w[0] == '#':
-        w = w.replace("#","")
-    if w in words:
-        return words[w]
-    elif 'UUUNKKK' in words:
-        return words['UUUNKKK']
-    else:
-        return len(words) - 1
-
-def getSeq(p1,words):
-    p1 = p1.split()
-    X1 = []
-    for i in p1:
-        X1.append(lookupIDX(words, i))
-    return X1
-
-def getSeqs(p1,p2,words):
-    p1 = p1.split()
-    p2 = p2.split()
-    X1 = []
-    X2 = []
-    for i in p1:
-        X1.append(lookupIDX(words, i))
-    for i in p2:
-        X2.append(lookupIDX(words, i))
-    return X1, X2
-
-def get_minibatches_idx(n, minibatch_size, shuffle=False):
-    idx_list = np.arange(n, dtype="int32")
-
-    if shuffle:
-        np.random.shuffle(idx_list)
-
-    minibatches = []
-    minibatch_start = 0
-    for i in range(n // minibatch_size):
-        minibatches.append(idx_list[minibatch_start:
-        minibatch_start + minibatch_size])
-        minibatch_start += minibatch_size
-
-    if (minibatch_start != n):
-        minibatches.append(idx_list[minibatch_start:])
-
-    return list(zip(list(range(len(minibatches))), minibatches))
-
-def getSimEntDataset(f,words,task):
-    examples = []
-    with open(f, 'r') as data:
-        for i in data:
-            i = i.strip()
-            if(len(i) > 0):
-                i = i.split('\t')
-                if len(i) == 3:
-                    if task == "sim":
-                        e = (tree(i[0], words), tree(i[1], words), float(i[2]))
-                        examples.append(e)
-                    elif task == "ent":
-                        e = (tree(i[0], words), tree(i[1], words), i[2])
-                        examples.append(e)
-                    else:
-                        raise ValueError('Params.traintype not set correctly.')
-
-                else:
-                    print(i)
-    return examples
-
-def getSentimentDataset(f,words):
-    examples = []
-    with open(f, 'r') as data:
-        for i in data:
-            i = i.strip()
-            if(len(i) > 0):
-                i = i.split('\t')
-                if len(i) == 2:
-                    e = (tree(i[0], words), i[1])
-                    examples.append(e)
-                else:
-                    print(i)
-    return examples
-
-def getDataSim(batch, nout):
-    g1 = []
-    g2 = []
-    for i in batch:
-        g1.append(i[0].embeddings)
-        g2.append(i[1].embeddings)
-
-    g1x, g1mask = prepare_data(g1)
-    g2x, g2mask = prepare_data(g2)
-
-    scores = []
-    if nout <= 0:
-        return (scores, g1x, g1mask, g2x, g2mask)
-
-    for i in batch:
-        temp = np.zeros(nout)
-        score = float(i[2])
-        ceil, fl = int(np.ceil(score)), int(np.floor(score))
-        if ceil == fl:
-            temp[fl - 1] = 1
-        else:
-            temp[fl - 1] = ceil - score
-            temp[ceil - 1] = score - fl
-        scores.append(temp)
-    scores = np.matrix(scores) + 0.000001
-    scores = np.asarray(scores, dtype='float32')
-    return (scores, g1x, g1mask, g2x, g2mask)
-
-def getDataEntailment(batch):
-    g1, g2 = [], []
-    for i in batch:
-        g1.append(i[0].embeddings)
-        g2.append(i[1].embeddings)
-
-    g1x, g1mask = prepare_data(g1)
-    g2x, g2mask = prepare_data(g2)
-
-    scores = []
-    for i in batch:
-        temp = np.zeros(3)
-        label = i[2].strip()
-        if label == "CONTRADICTION":
-            temp[0] = 1
-        if label == "NEUTRAL":
-            temp[1] = 1
-        if label == "ENTAILMENT":
-            temp[2] = 1
-        scores.append(temp)
-    scores = np.matrix(scores) + 0.000001
-    scores = np.asarray(scores, dtype='float32')
-    return (scores, g1x, g1mask, g2x, g2mask)
-
-def getDataSentiment(batch):
-    g1 = []
-    for i in batch:
-        g1.append(i[0].embeddings)
-
-    g1x, g1mask = prepare_data(g1)
-
-    scores = []
-    for i in batch:
-        temp = np.zeros(2)
-        label = i[1].strip()
-        if label == "0":
-            temp[0] = 1
-        if label == "1":
-            temp[1] = 1
-        scores.append(temp)
-    scores = np.matrix(scores)+0.000001
-    scores = np.asarray(scores, dtype='float32')
-    return (scores, g1x, g1mask)
-
-def sentences2idx(sentences, words):
-    """
-    Given a list of sentences, output array of word indices that can be fed into the algorithms.
-    :param sentences: a list of sentences
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
-    :return: x1, m1. x1[i, :] is the word indices in sentence i, m1[i,:] is the mask for sentence i (0 means no word at the location)
-    """
-    seq1 = []
-    for i in sentences:
-        seq1.append(getSeq(i, words))
-    x1, m1 = prepare_data(seq1)
-    return x1, m1
+            vector = [float(x) for x in line[-GLOVE_DIM:]]
+            vector = np.array(vector)
+            try:
+                db.execute(
+                    "INSERT OR ABORT INTO "
+                    "word_indexes(word, idx) VALUES (?, ?);",
+                    (word, i))
+            except sqlite3.IntegrityError as e:
+                log.critical(
+                    "IntegrityError: Possible duplicate entry in Glove"
+                    "embeddings for word %r, line %d" % (word, i))
+            else:
+                weight = weights.get(word, 1.0)
+                norms.append(np.linalg.norm(vector))
+                db.execute(
+                    """INSERT INTO sif_embeddings(idx, embedding, weight)
+                       VALUES (?, ?, ?)""",
+                    (i, embedding_to_bytes(vector), weight))
+    median = statistics.median(norms)
+    db.execute("INSERT INTO meta(key, value_float) VALUES (?, ?)",
+               ("glove_median_norm", median))
+    db.commit()
 
 
-def sentiment2idx(sentiment_file, words):
-    """
-    Read sentiment data file, output array of word indices that can be fed into the algorithms.
-    :param sentiment_file: file name
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
-    :return: x1, m1, golds. x1[i, :] is the word indices in sentence i, m1[i,:] is the mask for sentence i (0 means no word at the location), golds[i] is the label (0 or 1) for sentence i.
-    """
-    with open(sentiment_file, 'r') as f:
-        golds = []
-        seq1 = []
-        for i in f:
-            i = i.split("\t")
-            p1, score = i[0], int(i[1])  # score are labels 0 and 1
-            X1 = getSeq(p1, words)
-            seq1.append(X1)
-            golds.append(score)
-        x1, m1 = prepare_data(seq1)
-        return x1, m1, golds
-
-def sim2idx(sim_file, words):
-    """
-    Read similarity data file, output array of word indices that can be fed into the algorithms.
-    :param sim_file: file name
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
-    :return: x1, m1, x2, m2, golds. x1[i, :] is the word indices in the first sentence in pair i, m1[i,:] is the mask for the first sentence in pair i (0 means no word at the location), golds[i] is the score for pair i (float). x2 and m2 are similar to x1 and m2 but for the second sentence in the pair.
-    """
-    with open(sim_file,'r') as f:
-        golds = []
-        seq1 = []
-        seq2 = []
-        for i in f:
-            i = i.split("\t")
-            p1, p2, score = i[0], i[1], float(i[2])
-            X1, X2 = getSeqs(p1, p2, words)
-            seq1.append(X1)
-            seq2.append(X2)
-            golds.append(score)
-        x1, m1 = prepare_data(seq1)
-        x2, m2 = prepare_data(seq2)
-        return x1, m1, x2, m2, golds
-
-def entailment2idx(sim_file, words):
-    """
-    Read similarity data file, output array of word indices that can be fed into the algorithms.
-    :param sim_file: file name
-    :param words: a dictionary, words['str'] is the indices of the word 'str'
-    :return: x1, m1, x2, m2, golds. x1[i, :] is the word indices in the first sentence in pair i, m1[i,:] is the mask for the first sentence in pair i (0 means no word at the location), golds[i] is the label for pair i (CONTRADICTION NEUTRAL ENTAILMENT). x2 and m2 are similar to x1 and m2 but for the second sentence in the pair.
-    """
-    with open(sim_file, 'r') as f:
-        golds = []
-        seq1 = []
-        seq2 = []
-        for i in f:
-            i = i.split("\t")
-            p1, p2, score = i[0], i[1], i[2]
-            X1, X2 = getSeqs(p1, p2, words)
-            seq1.append(X1)
-            seq2.append(X2)
-            golds.append(score)
-        x1, m1 = prepare_data(seq1)
-        x2, m2 = prepare_data(seq2)
-        return x1, m1, x2, m2, golds
-
-def getWordWeight(weightfile, a=1e-3):
+def weights_from_file(weightfile, a=1e-3):
     if a <= 0:  # when the parameter makes no sense, use unweighted
         a = 1.0
 
-    word2weight = {}
+    count_sum = 0
+    word_weight_dict = {}
     with open(weightfile) as f:
-        N = 0
-        for i in f:
-            i = i.strip()
-            if(len(i) > 0):
-                i = i.split()
-                if(len(i) == 2):
-                    word2weight[i[0]] = float(i[1])
-                    N += float(i[1])
-                else:
-                    print(i)
-        for key, value in list(word2weight.items()):
-            word2weight[key] = a / (a + value/N)
-        return word2weight
+        for i, line in enumerate(f):
+            if i % 100 == 0:
+                log.debug("Reading weight %d", i)
+            line = line.strip()
+            if(len(line) > 0):
+                line = line.split()
+                if(len(line) == 2):
+                    word = encode(line[0])
+                    count = float(line[1])
+                    word_weight_dict[word] = count
+                    count_sum += count
 
-def getWeight(words, word2weight):
-    weight4ind = {}
-    for word, ind in list(words.items()):
-        if word in word2weight:
-            weight4ind[ind] = word2weight[word]
-        else:
-            weight4ind[ind] = 1.0
-    return weight4ind
+    for word, weight in word_weight_dict.items():
+        word_weight_dict[word] = a / (a + (weight / count_sum))
+    return word_weight_dict
 
-def seq2weight(seq, mask, weight4ind):
-    weight = np.zeros(seq.shape).astype('float32')
-    for i in range(seq.shape[0]):
-        for j in range(seq.shape[1]):
-            if mask[i, j] > 0 and seq[i, j] >= 0:
-                weight[i, j] = weight4ind[seq[i, j]]
-    weight = np.asarray(weight, dtype='float32')
-    return weight
 
-def getIDFWeight(wordfile, save_file=''):
-    def getDataFromFile(f, words):
-        with open(f, 'r') as f:
-            golds = []
-            seq1 = []
-            seq2 = []
-            for i in f:
-                i = i.split("\t")
-                p1, p2, score = i[0], i[1], float(i[2])
-                X1, X2 = getSeqs(p1, p2, words)
-                seq1.append(X1)
-                seq2.append(X2)
-                golds.append(score)
-            x1, m1 = prepare_data(seq1)
-            x2, m2 = prepare_data(seq2)
-            return x1, m1, x2, m2
+def sentence_to_indices(sentence, db):
+    words = [encode(word.lower()) for word in sentence]
+    # Because hashtags arent words or something
+    words = [word.replace("#", "")
+             if len(word) and word.startswith('#') else word
+             for word in words]
 
-    prefix = "../data/"
-    farr = ["MSRpar2012"]
-    #farr = ["MSRpar2012",
-    #        "MSRvid2012",
-    #        "OnWN2012",
-    #        "SMTeuro2012",
-    #        "SMTnews2012", # 4
-    #        "FNWN2013",
-    #        "OnWN2013",
-    #        "SMT2013",
-    #        "headline2013", # 8
-    #        "OnWN2014",
-    #        "deft-forum2014",
-    #        "deft-news2014",
-    #        "headline2014",
-    #        "images2014",
-    #        "tweet-news2014", # 14
-    #        "answer-forum2015",
-    #        "answer-student2015",
-    #        "belief2015",
-    #        "headline2015",
-    #        "images2015",    # 19
-    #        "sicktest",
-    #        "twitter",
-    #        "JHUppdb",
-    #        "anno-dev",
-    #        "anno-test"]
-    (words, We) = getWordmap(wordfile)
-    df = np.zeros((len(words),))
-    dlen = 0
-    for f in farr:
-        g1x, g1mask, g2x, g2mask = getDataFromFile(prefix+f, words)
-        dlen += g1x.shape[0]
-        dlen += g2x.shape[0]
-        for i in range(g1x.shape[0]):
-            for j in range(g1x.shape[1]):
-                if g1mask[i, j] > 0:
-                    df[g1x[i, j]] += 1
-        for i in range(g2x.shape[0]):
-            for j in range(g2x.shape[1]):
-                if g2mask[i, j] > 0:
-                    df[g2x[i, j]] += 1
 
-    weight4ind = {}
-    for i in range(len(df)):
-        weight4ind[i] = np.log2((dlen+2.0)/(1.0+df[i]))
-    if save_file:
-        pickle.dump(weight4ind, open(save_file, 'w'))
-    return weight4ind
+def get_indices_for_tokens(words, db):
+    d = dict(
+        db.execute(
+            "SELECT word, idx FROM word_indexes "
+            "WHERE word IN (" + ', '.join(['?'] * len(words)) + ");",
+            words))
+    return d
+
+
+def get_data_for_indices(indices, db, d=None):
+    indices = list(indices)
+    indices_set = set(indices) - set((None,))
+    if d is None:
+        d = dict()
+    query = db.execute(
+        "SELECT idx, weight, embedding FROM sif_embeddings "
+        "WHERE idx IN (" + ', '.join(['?'] * len(indices_set)) + ");",
+        list(indices_set))
+    for idx, weight, embedding_bytes in query:
+        d[idx] = {'weight': weight,
+                  'embedding': embedding_from_bytes(embedding_bytes)}
+
+    glove_norm = None
+    for idx in indices:
+        if idx not in d:
+            if glove_norm is None:
+                glove_norm = db.execute("SELECT value_float FROM meta "
+                                        "WHERE key =='glove_median_norm'")
+                glove_norm = glove_norm.fetchone()[0]
+            randvec = np.random.uniform(low=-1, high=1, size=GLOVE_DIM)
+            randvec = glove_norm * (randvec / np.linalg.norm(randvec))
+            d[idx] = {'weight': 1.0, 'embedding': randvec}
+    return d
+
+
+def prepare_data(list_of_token_lists, db):
+    lengths = [len(s) for s in list_of_token_lists]
+    n_samples = len(list_of_token_lists)
+
+    flatten = [x for y in list_of_token_lists for x in y]
+    indices = get_indices_for_tokens(flatten, db)
+
+    # replace tokens with indices or unique negative indices if not found
+    neg_count = itertools.count(-1, -1)
+    for token in flatten:
+        if token not in indices:
+            indices[token] = next(neg_count)
+
+    list_of_indices_lists = [[indices[word] for word in sentence]
+                             for sentence in list_of_token_lists]
+    flatten = [x for y in list_of_indices_lists for x in y]
+    data = get_data_for_indices(flatten, db)
+
+    maxlen = np.max(lengths)
+    x = np.zeros((n_samples, maxlen)).astype('int32')
+    x_weight = np.zeros((n_samples, maxlen)).astype('float32')
+    for idx, sentence in enumerate(list_of_indices_lists):
+        x[idx, :lengths[idx]] = sentence
+        x_weight[idx, :lengths[idx]] = [data[word]['weight']
+                                        for word in sentence]
+    return x, x_weight, data

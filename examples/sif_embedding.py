@@ -2,6 +2,9 @@ import sys
 sys.path.append('../src')
 
 import pprint
+import scipy
+import scipy.spatial
+import scipy.spatial.distance
 
 import data_io
 import params

@@ -16,7 +16,7 @@ weightfile = '../auxiliary_data/enwiki_vocab_min200.txt'
 weightpara = 1e-3
 # number of principal components to remove in SIF weighting scheme
 rmpc = 1
-sentences = ['this is an example sentenc'.split(),
+sentences = ['this is an example sentence'.split(),
              'this is another sentence that is slightly longer'.split()]
 
 db = data_io.setup_db()

@@ -20,7 +20,8 @@ weightpara = 1e-3
 # number of principal components to remove in SIF weighting scheme
 rmpc = 1
 sentences = ['this is an example sentence'.split(),
-             'this is another sentence that is slightly longer'.split()]
+             'this is another sentence that is slightly longer'.split(),
+             'and now for someting completely different'.split()]
 
 db = data_io.setup_db()
 
@@ -35,12 +36,14 @@ params = params.params()
 params.rmpc = rmpc
 # get SIF embedding
 embedding = SIF_embedding.SIF_embedding(idx_mat, weight_mat, data, params)
+import numpy as np
 
-pprint.pprint(embedding)
-print("Cosine similarity",
-      1 - scipy.spatial.distance.cosine(embedding[0, :], embedding[1, :]))
-print("Euclidean distance",
-      scipy.spatial.distance.euclidean(embedding[0, :], embedding[1, :]))
+print("Cosine dist"),
+pprint.pprint(scipy.spatial.distance.squareform(
+              scipy.spatial.distance.pdist(embedding, 'cosine')))
+print("Euclidean dist"),
+pprint.pprint(scipy.spatial.distance.squareform(
+              scipy.spatial.distance.pdist(embedding, 'euclidean')))
 
 
 db.close()

@@ -21,7 +21,17 @@ weightpara = 1e-3
 rmpc = 1
 sentences = ['this is an example sentence'.split(),
              'this is another sentence that is slightly longer'.split(),
-             'and now for someting completely different'.split()]
+             'and now for someting completely different'.split(),
+             'gorillas are found in Africa'.split()]
+
+sentences = [
+    'the lion is the king of the jungle'.split(),
+    'tigers hunt alone at night'.split(),
+    'long live the emperor'.split(),
+    'we call him little bobby tables'.split()]
+
+# import pickle
+# sentences = pickle.load(open('tiger.pd', 'rb'))
 
 db = data_io.setup_db()
 
@@ -36,7 +46,10 @@ params = params.params()
 params.rmpc = rmpc
 # get SIF embedding
 embedding = SIF_embedding.SIF_embedding(idx_mat, weight_mat, data, params)
-import numpy as np
+
+with open('svdump.pd', 'wb') as f:
+    pickle.dump(embedding, f)
+pprint.pprint(list(enumerate(sentences)))
 
 print("Cosine dist"),
 pprint.pprint(scipy.spatial.distance.squareform(

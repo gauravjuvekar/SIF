@@ -149,11 +149,20 @@ def sentence_to_indices(sentence, db):
 
 
 def get_indices_for_tokens(words, db):
+    db.commit()
+    db.execute("CREATE TEMPORARY TABLE temporary_tokens( "
+               "    word TEXT PRIMARY KEY NOT NULL"
+               ");")
+    db.executemany("INSERT INTO temporary_tokens(word) VALUES (?);",
+                   words)
+
     d = dict(
         db.execute(
-            "SELECT word, idx FROM word_indexes "
-            "WHERE word IN (" + ', '.join(['?'] * len(words)) + ");",
+            "SELECT word, idx FROM word_indexes WHERE word IN "
+            "(SELECT word FROM temporary_tokens);",
             words))
+    db.execute("DROP TABLE temporary_tokens;")
+    db.rollback()
     return d
 
 

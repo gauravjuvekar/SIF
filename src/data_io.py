@@ -18,7 +18,7 @@ def encode(s):
 
 
 def setup_db(f=DB_FILE):
-    db = sqlite3.connect(DB_FILE)
+    db = sqlite3.connect(f)
     db.executescript(
         """
         CREATE TABLE IF NOT EXISTS word_indexes(

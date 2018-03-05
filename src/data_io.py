@@ -153,14 +153,13 @@ def get_indices_for_tokens(words, db):
     db.execute("CREATE TEMPORARY TABLE temporary_tokens( "
                "    word TEXT PRIMARY KEY NOT NULL"
                ");")
-    db.executemany("INSERT INTO temporary_tokens(word) VALUES (?);",
-                   words)
+    db.executemany("INSERT OR IGNORE INTO temporary_tokens(word) VALUES (?);",
+                   [(word,) for word in words])
 
     d = dict(
         db.execute(
             "SELECT word, idx FROM word_indexes WHERE word IN "
-            "(SELECT word FROM temporary_tokens);",
-            words))
+            "(SELECT word FROM temporary_tokens);"))
     db.execute("DROP TABLE temporary_tokens;")
     db.rollback()
     return d

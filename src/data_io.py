@@ -3,6 +3,8 @@ import numpy as np
 import statistics
 # from theano import config
 
+import cachetools
+
 import sqlite3
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -10,6 +12,8 @@ log = logging.getLogger()
 
 GLOVE_DIM = 300
 DB_FILE = "../data/sif.db"
+
+CACHE_SIZE = 8192
 
 
 def encode(s):
@@ -148,36 +152,60 @@ def sentence_to_indices(sentence, db):
              for word in words]
 
 
+indices_cache = cachetools.LRUCache(CACHE_SIZE)
+
 def get_indices_for_tokens(words, db):
+    d = dict()
+    query = []
+    for word in words:
+        if word in indices_cache:
+            d[word] = indices_cache[word]
+        else:
+            query.append(word)
+
     db.commit()
     db.execute("CREATE TEMPORARY TABLE temporary_tokens( "
                "    word TEXT PRIMARY KEY NOT NULL"
                ");")
     db.executemany("INSERT OR IGNORE INTO temporary_tokens(word) VALUES (?);",
-                   [(word,) for word in words])
+                   [(word,) for word in query])
 
-    d = dict(
+    result = dict(
         db.execute(
             "SELECT word, idx FROM word_indexes WHERE word IN "
             "(SELECT word FROM temporary_tokens);"))
+    indices_cache.update(result)
+    d.update(result)
     db.execute("DROP TABLE temporary_tokens;")
     db.rollback()
     return d
 
+
+data_cache = cachetools.LRUCache(CACHE_SIZE)
 
 def get_data_for_indices(indices, db, d=None):
     indices = list(indices)
     indices_set = set(indices) - set((None,))
     if d is None:
         d = dict()
+
+    query_set = set()
+    for q in indices_set:
+        if q in data_cache:
+            d[q] = data_cache[q]
+        else:
+            query_set.add(q)
+
     query = db.execute(
         "SELECT idx, weight, embedding FROM sif_embeddings "
-        "WHERE idx IN (" + ', '.join(['?'] * len(indices_set)) + ");",
-        list(indices_set))
+        "WHERE idx IN (" + ', '.join(['?'] * len(query_set)) + ");",
+        list(query_set))
+    result = dict()
     for idx, weight, embedding_bytes in query:
-        d[idx] = {'weight': weight,
+        result[idx] = {'weight': weight,
                   'embedding': embedding_from_bytes(embedding_bytes)}
-
+    d.update(result)
+    data_cache.update(result)
     glove_norm = None
     for idx in indices:
         if idx not in d:
@@ -188,6 +216,7 @@ def get_data_for_indices(indices, db, d=None):
             randvec = np.random.uniform(low=-1, high=1, size=GLOVE_DIM)
             randvec = glove_norm * (randvec / np.linalg.norm(randvec))
             d[idx] = {'weight': 1.0, 'embedding': randvec}
+            data_cache[idx] = d[idx]
     return d
 
 

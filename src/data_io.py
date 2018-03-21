@@ -144,14 +144,6 @@ def weights_from_file(weightfile, a=1e-3):
     return word_weight_dict
 
 
-def sentence_to_indices(sentence, db):
-    words = [encode(word.lower()) for word in sentence]
-    # Because hashtags arent words or something
-    words = [word.replace("#", "")
-             if len(word) and word.startswith('#') else word
-             for word in words]
-
-
 indices_cache = cachetools.LRUCache(CACHE_SIZE)
 
 def get_indices_for_tokens(words, db):

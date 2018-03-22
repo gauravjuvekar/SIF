@@ -145,7 +145,6 @@ def weights_from_file(weightfile, a=1e-3):
 
 
 indices_cache = cachetools.LRUCache(CACHE_SIZE)
-
 def get_indices_for_tokens(words, db):
     d = dict()
     query = []
@@ -160,7 +159,7 @@ def get_indices_for_tokens(words, db):
                "    word TEXT PRIMARY KEY NOT NULL"
                ");")
     db.executemany("INSERT OR IGNORE INTO temporary_tokens(word) VALUES (?);",
-                   [(word,) for word in query])
+                   list(set((word,) for word in query)))
 
     result = dict(
         db.execute(
@@ -174,7 +173,6 @@ def get_indices_for_tokens(words, db):
 
 
 data_cache = cachetools.LRUCache(CACHE_SIZE)
-
 def get_data_for_indices(indices, db, d=None):
     indices = list(indices)
     indices_set = set(indices) - set((None,))
@@ -188,14 +186,20 @@ def get_data_for_indices(indices, db, d=None):
         else:
             query_set.add(q)
 
+    db.execute("CREATE TEMPORARY TABLE temporary_idx( "
+               "    idx INTEGER PRIMARY KEY NOT NULL"
+               ");")
+    db.executemany("INSERT OR IGNORE INTO temporary_idx(idx) VALUES (?);",
+                   list(query_set))
     query = db.execute(
-        "SELECT idx, weight, embedding FROM sif_embeddings "
-        "WHERE idx IN (" + ', '.join(['?'] * len(query_set)) + ");",
-        list(query_set))
+        "SELECT idx, weight, embedding FROM sif_embeddings WHERE idx IN "
+        "(SELECT idx FROM temporary_idx);")
     result = dict()
     for idx, weight, embedding_bytes in query:
         result[idx] = {'weight': weight,
-                  'embedding': embedding_from_bytes(embedding_bytes)}
+                       'embedding': embedding_from_bytes(embedding_bytes)}
+    db.execute("DROP TABLE temporary_idx;")
+    db.rollback()
     d.update(result)
     data_cache.update(result)
     glove_norm = None

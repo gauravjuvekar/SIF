@@ -190,7 +190,7 @@ def get_data_for_indices(indices, db, d=None):
                "    idx INTEGER PRIMARY KEY NOT NULL"
                ");")
     db.executemany("INSERT OR IGNORE INTO temporary_idx(idx) VALUES (?);",
-                   list(query_set))
+                   list((x,) for x in query_set))
     query = db.execute(
         "SELECT idx, weight, embedding FROM sif_embeddings WHERE idx IN "
         "(SELECT idx FROM temporary_idx);")

@@ -8,7 +8,7 @@ import cachetools
 import sqlite3
 import logging
 logging.basicConfig(level=logging.DEBUG)
-log = logging.getLogger()
+log = logging.getLogger(__name__)
 
 GLOVE_DIM = 300
 DB_FILE = "../data/sif.db"
@@ -154,21 +154,26 @@ def get_indices_for_tokens(words, db):
         else:
             query.append(word)
 
-    db.commit()
-    db.execute("CREATE TEMPORARY TABLE temporary_tokens( "
-               "    word TEXT PRIMARY KEY NOT NULL"
-               ");")
-    db.executemany("INSERT OR IGNORE INTO temporary_tokens(word) VALUES (?);",
-                   list(set((word,) for word in query)))
+    if len(query):
+        query_params = list(set((word,) for word in query))
+        log.debug("Fetch indices: %d terms (%d cache hit)",
+                  len(query_params), len(d))
+        db.commit()
+        db.execute("CREATE TEMPORARY TABLE temporary_tokens( "
+                   "    word TEXT PRIMARY KEY NOT NULL"
+                   ");")
+        db.executemany(
+            "INSERT OR IGNORE INTO temporary_tokens(word) VALUES (?);",
+            query_params)
 
-    result = dict(
-        db.execute(
-            "SELECT word, idx FROM word_indexes WHERE word IN "
-            "(SELECT word FROM temporary_tokens);"))
-    indices_cache.update(result)
-    d.update(result)
-    db.execute("DROP TABLE temporary_tokens;")
-    db.rollback()
+        result = dict(
+            db.execute(
+                "SELECT word, idx FROM word_indexes WHERE word IN "
+                "(SELECT word FROM temporary_tokens);"))
+        indices_cache.update(result)
+        d.update(result)
+        db.execute("DROP TABLE temporary_tokens;")
+        db.rollback()
     return d
 
 
@@ -186,22 +191,26 @@ def get_data_for_indices(indices, db, d=None):
         else:
             query_set.add(q)
 
-    db.execute("CREATE TEMPORARY TABLE temporary_idx( "
-               "    idx INTEGER PRIMARY KEY NOT NULL"
-               ");")
-    db.executemany("INSERT OR IGNORE INTO temporary_idx(idx) VALUES (?);",
-                   list((x,) for x in query_set))
-    query = db.execute(
-        "SELECT idx, weight, embedding FROM sif_embeddings WHERE idx IN "
-        "(SELECT idx FROM temporary_idx);")
-    result = dict()
-    for idx, weight, embedding_bytes in query:
-        result[idx] = {'weight': weight,
-                       'embedding': embedding_from_bytes(embedding_bytes)}
-    db.execute("DROP TABLE temporary_idx;")
-    db.rollback()
-    d.update(result)
-    data_cache.update(result)
+    if len(query_set):
+        query_params = list((x,) for x in query_set)
+        log.debug("Fetch data: %d terms (%d cache hit)",
+                  len(query_params), len(d))
+        db.execute("CREATE TEMPORARY TABLE temporary_idx( "
+                   "    idx INTEGER PRIMARY KEY NOT NULL"
+                   ");")
+        db.executemany("INSERT OR IGNORE INTO temporary_idx(idx) VALUES (?);",
+                       query_params)
+        query = db.execute(
+            "SELECT idx, weight, embedding FROM sif_embeddings WHERE idx IN "
+            "(SELECT idx FROM temporary_idx);")
+        result = dict()
+        for idx, weight, embedding_bytes in query:
+            result[idx] = {'weight': weight,
+                           'embedding': embedding_from_bytes(embedding_bytes)}
+        db.execute("DROP TABLE temporary_idx;")
+        db.rollback()
+        d.update(result)
+        data_cache.update(result)
     glove_norm = None
     for idx in indices:
         if idx not in d:
